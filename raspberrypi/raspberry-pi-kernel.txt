@@ -1,0 +1,62 @@
+I've found recently the source downloaded by rpi-source for the raspberry pi kernel is not correct.
+
+So, get the source somehow and compile. Checking the version is done as follows:
+$ head -3 Makefile
+VERSION = 4
+PATCHLEVEL = 9
+SUBLEVEL = 80
+
+Raspberry Pi Zero / v1:
+$ KERNEL=kernel
+$ echo "+" > .scmversion
+$ make bcmrpi_defconfig
+
+Raspberry Pi >= 2:
+$ KERNEL=kernel7
+$ echo "-v7+" > .scmversion
+$ make bcm2709_defconfig
+
+Quick check to be sure (6 = Raspberry Pi Zero / 1, 7 = Raspberry Pi 2 and above):
+$ grep "ARCH_MULTI_V.=" .config
+
+Configure as required:
+$ make menuconfig
+
+Compile everything using four cores:
+$ make -j4 ARCH=arm zImage modules dtbs
+
+Choose a target place to install the kernel, modules and boot files:
+TARGET="/media/target"
+
+Create the target with some subdirectories:
+$ sudo mkdir -p $TARGET/boot/overlays
+
+Install the Kernel modules inside this target:
+$ sudo make INSTALL_MOD_PATH=$TARGET modules_install
+
+Put all the extra stuff in the target directory:
+$ sudo cp arch/arm/boot/zImage $TARGET/boot/$KERNEL.img
+$ sudo cp arch/arm/boot/dts/*.dtb $TARGET/boot/
+$ sudo cp arch/arm/boot/dts/overlays/*.dtb* $TARGET/boot/overlays/
+$ sudo cp arch/arm/boot/dts/overlays/README $TARGET/boot/overlays/
+
+Keep some key configuration files and clean out the build source:
+$ cp Module.symvers /tmp
+$ cp .config /tmp
+$ make distclean
+$ cp /tmp/.config .
+$ make modules_prepare
+$ cp /tmp/Module.symvers .
+
+Basic headers can be backed up as follows:
+$ cd ..
+$ tar cfvz linux-rpi-headers.tar.gz \
+	linux/include linux/scripts linux/Makefile linux/Module.symvers \
+	linux/arch/arm/boot/dts/include \
+	linux/arch/arm/include \
+	linux/arch/arm/plat* \
+	linux/arch/arm/mach*
+
+The /boot and /lib can be stored using the following and transferred to another system:
+$ cd $TARGET
+$ tar cfvz ../linux-rpi-kernel.tar.gz boot lib

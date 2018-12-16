@@ -1,0 +1,510 @@
+--- linux_media-latest/drivers/media/pci/tbsecp3/Kconfig	2018-11-06 21:58:21.000000000 +0000
++++ linux-4.19/drivers/media/pci/tbsecp3/Kconfig	2018-11-10 16:16:19.512359323 +0000
+@@ -4,18 +4,6 @@
+ 	select I2C_ALGOBIT
+ 	select DVB_TAS2101 if MEDIA_SUBDRV_AUTOSELECT
+ 	select MEDIA_TUNER_AV201X if MEDIA_SUBDRV_AUTOSELECT
+-	select DVB_STV091X if MEDIA_SUBDRV_AUTOSELECT
+-	select MEDIA_TUNER_STV6120 if MEDIA_SUBDRV_AUTOSELECT
+-	select DVB_SI2168 if MEDIA_SUBDRV_AUTOSELECT
+-	select MEDIA_TUNER_SI2157 if MEDIA_SUBDRV_AUTOSELECT
+-	select DVB_MXL58X if MEDIA_SUBDRV_AUTOSELECT
+-	select DVB_SI2183 if MEDIA_SUBDRV_AUTOSELECT
+-	select DVB_MN88436 if MEDIA_SUBDRV_AUTOSELECT
+-	select MEDIA_TUNER_MXL603 if MEDIA_SUBDRV_AUTOSELECT
+-	select DVB_GX1503 if MEDIA_SUBDRV_AUTOSELECT
+-	select DVB_MTV23X if MEDIA_SUBDRV_AUTOSELECT
+-	select DVB_TAS2971 if MEDIA_SUBDRV_AUTOSELECT
+-	select DVB_STID135 if MEDIA_SUBDRV_AUTOSELECT
+ 	help
+ 	  Support for cards with TBS ECP3 FPGA based PCIe bridge.
+ 
+--- linux_media-latest/drivers/media/pci/tbsecp3/Makefile	2018-11-06 21:58:21.000000000 +0000
++++ linux-4.19/drivers/media/pci/tbsecp3/Makefile	2018-11-10 16:15:58.191579410 +0000
+@@ -6,4 +6,3 @@
+ ccflags-y += -Idrivers/media/tuners
+ ccflags-y += -Idrivers/media/dvb-core
+ ccflags-y += -Idrivers/media/dvb-frontends
+-ccflags-y += -Idrivers/media/dvb-frontends/stid135
+--- linux_media-latest/drivers/media/tuners/Kconfig	2018-11-06 21:58:21.000000000 +0000
++++ linux-4.19/drivers/media/tuners/Kconfig	2018-11-10 16:14:05.379459679 +0000
+@@ -56,13 +56,6 @@
+ 	help
+ 	  A silicon tuner module. Say Y when you want to support this tuner.
+ 
+-config MEDIA_TUNER_TDA18273
+-	tristate "NXP TDA18273 silicon tuner"
+-	depends on MEDIA_SUPPORT && I2C
+-	default m if !MEDIA_SUBDRV_AUTOSELECT
+-	help
+-	  A silicon tuner module. Say Y when you want to support this tuner.
+-
+ config MEDIA_TUNER_TDA9887
+ 	tristate "TDA 9885/6/7 analog IF demodulator"
+ 	depends on MEDIA_SUPPORT && I2C
+@@ -306,27 +299,4 @@
+ 	help
+ 	  Airoha Technology AV201x silicon tuner driver.
+ 
+-config MEDIA_TUNER_STV6120
+-	tristate "STV6120 silicon tuner"
+-	depends on MEDIA_SUPPORT && I2C
+-	default m if !MEDIA_SUBDRV_AUTOSELECT
+-	help
+-	  STV6120 silicon tuner driver.
+-
+-config MEDIA_TUNER_R848
+-        tristate "Rafael Micro R848 silicon tuner"
+-        depends on MEDIA_SUPPORT && I2C
+-        default m if !MEDIA_SUBDRV_AUTOSELECT
+-        select BITREVERSE
+-        help
+-          Rafael Micro R848 silicon tuner driver.
+-
+-config MEDIA_TUNER_MXL603
+-        tristate "MaxLinear mxl603 silicon tuner"
+-        depends on MEDIA_SUPPORT && I2C
+-        default m if !MEDIA_SUBDRV_AUTOSELECT
+-        select BITREVERSE
+-        help
+-          A driver for the silicon tuner MXL603 from MaxLinear.
+-
+ endmenu
+--- linux_media-latest/drivers/media/tuners/Makefile	2018-11-06 21:58:21.000000000 +0000
++++ linux-4.19/drivers/media/tuners/Makefile	2018-11-10 16:14:05.379459679 +0000
+@@ -16,7 +16,6 @@
+ obj-$(CONFIG_MEDIA_TUNER_TDA9887) += tda9887.o
+ obj-$(CONFIG_MEDIA_TUNER_TDA827X) += tda827x.o
+ obj-$(CONFIG_MEDIA_TUNER_TDA18271) += tda18271.o
+-obj-$(CONFIG_MEDIA_TUNER_TDA18273) += tda18273.o
+ obj-$(CONFIG_MEDIA_TUNER_XC5000) += xc5000.o
+ obj-$(CONFIG_MEDIA_TUNER_XC4000) += xc4000.o
+ obj-$(CONFIG_MEDIA_TUNER_MSI001) += msi001.o
+@@ -45,9 +44,6 @@
+ obj-$(CONFIG_MEDIA_TUNER_QM1D1B0004) += qm1d1b0004.o
+ obj-$(CONFIG_MEDIA_TUNER_M88RS6000T) += m88rs6000t.o
+ obj-$(CONFIG_MEDIA_TUNER_AV201X) += av201x.o
+-obj-$(CONFIG_MEDIA_TUNER_STV6120) += stv6120.o
+-obj-$(CONFIG_MEDIA_TUNER_R848) += r848.o
+-obj-$(CONFIG_MEDIA_TUNER_MXL603) += mxl603.o
+ obj-$(CONFIG_MEDIA_TUNER_TDA18250) += tda18250.o
+ 
+ ccflags-y += -I$(srctree)/drivers/media/dvb-frontends
+--- linux_media-latest/drivers/media/dvb-frontends/Kconfig	2018-11-06 21:58:21.000000000 +0000
++++ linux-4.19/drivers/media/dvb-frontends/Kconfig	2018-11-10 16:43:01.431526352 +0000
+@@ -4,27 +4,6 @@
+ comment "Multistandard (satellite) frontends"
+ 	depends on DVB_CORE
+ 
+-config DVB_CX24116
+-	tristate "Conexant CX24116 based"
+-	depends on DVB_CORE && I2C
+-	default m if !MEDIA_SUBDRV_AUTOSELECT
+-	help
+-	  A DVB-S/S2 tuner module. Say Y when you want to support this frontend.
+-
+-config DVB_CX24117
+-	tristate "Conexant CX24117 based"
+-	depends on DVB_CORE && I2C
+-	default m if !MEDIA_SUBDRV_AUTOSELECT
+-	help
+-	  A Dual DVB-S/S2 tuner module. Say Y when you want to support this frontend.
+-
+-config DVB_CX24120
+-	tristate "Conexant CX24120 based"
+-	depends on DVB_CORE && I2C
+-	default m if !MEDIA_SUBDRV_AUTOSELECT
+-	help
+-	  A DVB-S/S2 tuner module. Say Y when you want to support this frontend.
+-
+ config DVB_STB0899
+ 	tristate "STB0899 based"
+ 	depends on DVB_CORE && I2C
+@@ -41,20 +20,6 @@
+ 	  A Silicon tuner from ST used in conjunction with the STB0899
+ 	  demodulator. Say Y when you want to support this tuner.
+ 
+-config DVB_STV6110
+-	tristate "ST STV6110 silicon tuner"
+-	depends on DVB_CORE && I2C
+-	default m if !MEDIA_SUBDRV_AUTOSELECT
+-	help
+-	  A DVB-S silicon tuner module. Say Y when you want to support this tuner.
+-
+-config DVB_STV0900
+-	tristate "ST STV0900 based"
+-	depends on DVB_CORE && I2C
+-	default m if !MEDIA_SUBDRV_AUTOSELECT
+-	help
+-	  A DVB-S/S2 demodulator. Say Y when you want to support this frontend.
+-
+ config DVB_STV090x
+ 	tristate "STV0900/STV0903(A/B) based"
+ 	depends on DVB_CORE && I2C
+@@ -63,41 +28,6 @@
+ 	  DVB-S/S2/DSS Multistandard Professional/Broadcast demodulators.
+ 	  Say Y when you want to support these frontends.
+ 
+-config DVB_STV6110x
+-	tristate "STV6110/(A) based tuners"
+-	depends on DVB_CORE && I2C
+-	default m if !MEDIA_SUBDRV_AUTOSELECT
+-	help
+-	  A Silicon tuner that supports DVB-S and DVB-S2 modes
+-
+-config DVB_TS2020
+-	tristate "Montage Tehnology TS2020 based tuners"
+-	depends on DVB_CORE && I2C
+-	select REGMAP_I2C
+-	default m if !MEDIA_SUBDRV_AUTOSELECT
+-	help
+-	  A DVB-S/S2 silicon tuner. Say Y when you want to support this tuner.
+-
+-config DVB_DS3000
+-	tristate "Montage Tehnology DS3000 based"
+-	depends on DVB_CORE && I2C
+-	default m if !MEDIA_SUBDRV_AUTOSELECT
+-	help
+-	  A DVB-S/S2 tuner module. Say Y when you want to support this frontend.
+-
+-config DVB_M88DS3103
+-	tristate "Montage Technology M88DS3103"
+-	depends on DVB_CORE && I2C && I2C_MUX
+-	select REGMAP_I2C
+-	default m if !MEDIA_SUBDRV_AUTOSELECT
+-	help
+-	  Say Y when you want to support this frontend.
+-
+-config DVB_GP8PSK_FE
+-	tristate
+-	depends on DVB_CORE
+-	default DVB_USB_GP8PSK
+-
+ config DVB_STV0910
+ 	tristate "STV0910 based"
+ 	depends on DVB_CORE && I2C
+@@ -107,6 +37,13 @@
+ 
+ 	  Say Y when you want to support these frontends.
+ 
++config DVB_STV6110x
++	tristate "STV6110/(A) based tuners"
++	depends on DVB_CORE && I2C
++	default m if !MEDIA_SUBDRV_AUTOSELECT
++	help
++	  A Silicon tuner that supports DVB-S and DVB-S2 modes
++
+ config DVB_STV6111
+ 	tristate "STV6111 based tuners"
+ 	depends on DVB_CORE && I2C
+@@ -132,28 +69,12 @@
+ 	help
+ 	Say Y when you want to support this frontend.
+ 
+-config DVB_STV091X
+-	tristate "STV091x based"
+-	depends on DVB_CORE && I2C
+-	default m if !MEDIA_SUBDRV_AUTOSELECT
+-	help
+-	  DVB-S/S2/DSS Multistandard Professional/Broadcast demodulators.
+-	  Say Y when you want to support these frontends.
+-
+-config DVB_MXL58X
+-	tristate "MaxLinear MXL58X based"
+-	depends on DVB_CORE && I2C
+-	default m if !MEDIA_SUBDRV_AUTOSELECT
+-	help
+-	  A DVB-S demod and tuner module.
+-	  Say Y when you want to support this frontend.
+-
+-config DVB_TBSPRIV
+-	tristate "TBS private virtual demodulator "
+-	depends on DVB_CORE && I2C
++config DVB_M88DS3103
++	tristate "Montage Technology M88DS3103"
++	depends on DVB_CORE && I2C && I2C_MUX
++	select REGMAP_I2C
+ 	default m if !MEDIA_SUBDRV_AUTOSELECT
+ 	help
+-	  A DVB-S demod and tuner module.
+ 	  Say Y when you want to support this frontend.
+ 
+ comment "Multistandard (cable + terrestrial) frontends"
+@@ -269,6 +190,20 @@
+ 	help
+ 	  A DVB-S tuner module. Say Y when you want to support this frontend.
+ 
++config DVB_STV6110
++	tristate "ST STV6110 silicon tuner"
++	depends on DVB_CORE && I2C
++	default m if !MEDIA_SUBDRV_AUTOSELECT
++	help
++	  A DVB-S silicon tuner module. Say Y when you want to support this tuner.
++
++config DVB_STV0900
++	tristate "ST STV0900 based"
++	depends on DVB_CORE && I2C
++	default m if !MEDIA_SUBDRV_AUTOSELECT
++	help
++	  A DVB-S/S2 demodulator. Say Y when you want to support this frontend.
++
+ config DVB_TDA8083
+ 	tristate "Philips TDA8083 based"
+ 	depends on DVB_CORE && I2C
+@@ -326,6 +261,27 @@
+ 	help
+ 	  A DVB-S PLL chip.
+ 
++config DVB_CX24116
++	tristate "Conexant CX24116 based"
++	depends on DVB_CORE && I2C
++	default m if !MEDIA_SUBDRV_AUTOSELECT
++	help
++	  A DVB-S/S2 tuner module. Say Y when you want to support this frontend.
++
++config DVB_CX24117
++	tristate "Conexant CX24117 based"
++	depends on DVB_CORE && I2C
++	default m if !MEDIA_SUBDRV_AUTOSELECT
++	help
++	  A Dual DVB-S/S2 tuner module. Say Y when you want to support this frontend.
++
++config DVB_CX24120
++	tristate "Conexant CX24120 based"
++	depends on DVB_CORE && I2C
++	default m if !MEDIA_SUBDRV_AUTOSELECT
++	help
++	  A DVB-S/S2 tuner module. Say Y when you want to support this frontend.
++
+ config DVB_SI21XX
+ 	tristate "Silicon Labs SI21XX based"
+ 	depends on DVB_CORE && I2C
+@@ -333,13 +289,20 @@
+ 	help
+ 	  A DVB-S tuner module. Say Y when you want to support this frontend.
+ 
+-config DVB_M88RS2000
+-	tristate "M88RS2000 DVB-S demodulator and tuner"
++config DVB_TS2020
++	tristate "Montage Tehnology TS2020 based tuners"
+ 	depends on DVB_CORE && I2C
++	select REGMAP_I2C
+ 	default m if !MEDIA_SUBDRV_AUTOSELECT
+ 	help
+-	  A DVB-S tuner module.
+-	  Say Y when you want to support this frontend.
++	  A DVB-S/S2 silicon tuner. Say Y when you want to support this tuner.
++
++config DVB_DS3000
++	tristate "Montage Tehnology DS3000 based"
++	depends on DVB_CORE && I2C
++	default m if !MEDIA_SUBDRV_AUTOSELECT
++	help
++	  A DVB-S/S2 tuner module. Say Y when you want to support this frontend.
+ 
+ config DVB_MB86A16
+ 	tristate "Fujitsu MB86A16 based"
+@@ -585,11 +548,10 @@
+ 	help
+ 	  Say Y when you want to support this frontend.
+ 
+-config DVB_AF9033
+-	tristate "Afatech AF9033 DVB-T demodulator"
+-	depends on DVB_CORE && I2C
+-	select REGMAP_I2C
+-	default m if !MEDIA_SUBDRV_AUTOSELECT
++config DVB_GP8PSK_FE
++	tristate
++	depends on DVB_CORE
++	default DVB_USB_GP8PSK
+ 
+ source "drivers/media/dvb-frontends/cxd2880/Kconfig"
+ 
+@@ -746,14 +708,6 @@
+ 	  An ATSC 8VSB and QAM64/256 tuner module. Say Y when you want
+ 	  to support this frontend.
+ 
+-config DVB_MN88436
+-	tristate "Panasonic MN88436"
+-	depends on DVB_CORE && I2C
+-	default m if !MEDIA_SUBDRV_AUTOSELECT
+-	help
+-	  An ATSC 8VSB and QAM64/256 tuner module. Say Y when you want
+-	  to support this frontend.
+-
+ comment "ISDB-T (terrestrial) frontends"
+ 	depends on DVB_CORE
+ 
+@@ -781,14 +735,6 @@
+ 	  A driver for Fujitsu mb86a20s ISDB-T/ISDB-Tsb demodulator.
+ 	  Say Y when you want to support this frontend.
+ 
+-config DVB_MTV23X
+-	tristate "RAONTECH mtv23x"
+-	depends on DVB_CORE && I2C
+-	default m if !MEDIA_SUBDRV_AUTOSELECT
+-	help
+-	  A driver for RAONTECH mtv23x DVB-T/ISDB-T demodulator.
+-	  Say Y when you want to support this frontend.
+-
+ comment "ISDB-S (satellite) & ISDB-T (terrestrial) frontends"
+ 	depends on DVB_CORE
+ 
+@@ -883,13 +829,6 @@
+ 	help
+ 	  An SEC control chip.
+ 
+-config DVB_ISL6422
+-	tristate "ISL6422[B] SEC controller"
+-	depends on DVB_CORE && I2C
+-	default m if !MEDIA_SUBDRV_AUTOSELECT
+-	help
+-	  A Dual SEC controller chip from Intersil
+-
+ config DVB_ISL6423
+ 	tristate "ISL6423 SEC controller"
+ 	depends on DVB_CORE && I2C
+@@ -902,16 +841,6 @@
+ 	depends on DVB_CORE && I2C
+ 	default m if !MEDIA_SUBDRV_AUTOSELECT
+ 
+-comment "DTMB(DTMB) frontends"
+-	depends on DVB_CORE
+-
+-config DVB_GX1503
+-	tristate "National Chip GX1503b DMB-TH demodulator"
+-	depends on DVB_CORE && I2C && I2C_MUX
+-	default m if !MEDIA_SUBDRV_AUTOSELECT
+-	help
+-	  A DMB-TH tuner module. Say Y when you want to support this frontend.
+-
+ config DVB_LGS8GL5
+ 	tristate "Silicon Legend LGS-8GL5 demodulator (OFDM)"
+ 	depends on DVB_CORE && I2C
+@@ -934,28 +863,6 @@
+ 	help
+ 	  A DMB-TH tuner module. Say Y when you want to support this frontend.
+ 
+-comment "Multistandard (satellite + cable + terrestrial) frontends"
+-	depends on DVB_CORE
+-
+-config DVB_AVL6882
+-        tristate "Availink AVL6882 DVB-T/T2/C/S/S2 demodulator"
+-        depends on DVB_CORE && I2C
+-        default m if !MEDIA_SUBDRV_AUTOSELECT
+-        help
+-          Say Y when you want to support this frontend.
+-
+-config DVB_SI2183
+-	tristate "Silicon Labs Si2183 DVB-T/T2/C/C2/S/S2/S2X/ISDB-T demodulator"
+-	depends on DVB_CORE && I2C
+-	default m if !MEDIA_SUBDRV_AUTOSELECT
+-	help
+-	  Say Y when you want to support this frontend.
+-
+-source "drivers/media/dvb-frontends/stid135/Kconfig"
+-
+-comment "Silicon tuners"
+-	depends on DVB_CORE
+-
+ config DVB_TDA665x
+ 	tristate "TDA665x tuner"
+ 	depends on DVB_CORE && I2C
+@@ -974,6 +881,20 @@
+ 	help
+ 	  A DVB-S tuner module. Say Y when you want to support this frontend.
+ 
++config DVB_M88RS2000
++	tristate "M88RS2000 DVB-S demodulator and tuner"
++	depends on DVB_CORE && I2C
++	default m if !MEDIA_SUBDRV_AUTOSELECT
++	help
++	  A DVB-S tuner module.
++	  Say Y when you want to support this frontend.
++
++config DVB_AF9033
++	tristate "Afatech AF9033 DVB-T demodulator"
++	depends on DVB_CORE && I2C
++	select REGMAP_I2C
++	default m if !MEDIA_SUBDRV_AUTOSELECT
++
+ config DVB_HORUS3A
+ 	tristate "Sony Horus3A tuner"
+ 	depends on DVB_CORE && I2C
+@@ -1023,10 +944,3 @@
+ 	depends on DVB_CORE
+ 	default n
+ endmenu
+-
+-config DVB_TAS2971
+-	tristate "Tmax TAS2971 based"
+-	depends on DVB_CORE && I2C
+-	default m if !MEDIA_SUBDRV_AUTOSELECT
+-	help
+-	Say Y when you want to support this frontend.
+--- linux_media-latest/drivers/media/dvb-frontends/Makefile	2018-11-06 21:58:21.000000000 +0000
++++ linux-4.19/drivers/media/dvb-frontends/Makefile	2018-11-10 16:42:30.774546721 +0000
+@@ -97,7 +97,6 @@
+ obj-$(CONFIG_DVB_M88DS3103) += m88ds3103.o
+ obj-$(CONFIG_DVB_MN88472) += mn88472.o
+ obj-$(CONFIG_DVB_MN88473) += mn88473.o
+-obj-$(CONFIG_DVB_ISL6422) += isl6422.o
+ obj-$(CONFIG_DVB_ISL6423) += isl6423.o
+ obj-$(CONFIG_DVB_EC100) += ec100.o
+ obj-$(CONFIG_DVB_DS3000) += ds3000.o
+@@ -126,18 +125,8 @@
+ obj-$(CONFIG_DVB_AS102_FE) += as102_fe.o
+ obj-$(CONFIG_DVB_GP8PSK_FE) += gp8psk-fe.o
+ obj-$(CONFIG_DVB_TC90522) += tc90522.o
+-obj-$(CONFIG_DVB_MN88443X) += mn88443x.o
+ obj-$(CONFIG_DVB_TAS2101) += tas2101.o
+-obj-$(CONFIG_DVB_TAS2971) += tas2971.o
+-obj-$(CONFIG_DVB_MXL58X) += mxl58x.o
+-obj-$(CONFIG_DVB_SI2183) += si2183.o
+-obj-$(CONFIG_DVB_STV091X) += stv091x.o
+-obj-$(CONFIG_DVB_AVL6882) += avl6882.o
+-obj-$(CONFIG_DVB_MN88436) += mn88436.o
+-obj-$(CONFIG_DVB_MTV23X) += mtv23x.o
+-obj-$(CONFIG_DVB_GX1503) += gx1503.o
+-obj-$(CONFIG_DVB_TBSPRIV) += tbs_priv.o
+-obj-$(CONFIG_DVB_STID135) += stid135/
++obj-$(CONFIG_DVB_MN88443X) += mn88443x.o
+ obj-$(CONFIG_DVB_HORUS3A) += horus3a.o
+ obj-$(CONFIG_DVB_ASCOT2E) += ascot2e.o
+ obj-$(CONFIG_DVB_HELENE) += helene.o
+--- linux_media-latest/drivers/media/pci/Makefile	2018-11-06 21:58:21.000000000 +0000
++++ linux-4.19/drivers/media/pci/Makefile	2018-11-10 16:16:19.512359323 +0000
+@@ -16,7 +16,6 @@
+ 		smipcie/	\
+ 		netup_unidvb/	\
+ 		tbsecp3/	\
+-		tbscapture/	\
+ 		intel/
+ 
+ obj-$(CONFIG_VIDEO_IVTV) += ivtv/
+@@ -27,7 +26,6 @@
+ obj-$(CONFIG_VIDEO_BT848) += bt8xx/
+ obj-$(CONFIG_VIDEO_SAA7134) += saa7134/
+ obj-$(CONFIG_VIDEO_SAA7164) += saa7164/
+-obj-$(CONFIG_SAA716X_CORE) += saa716x/
+ obj-$(CONFIG_VIDEO_TW68) += tw68/
+ obj-$(CONFIG_VIDEO_TW686X) += tw686x/
+ obj-$(CONFIG_VIDEO_DT3155) += dt3155/
+--- linux_media-latest/drivers/media/pci/Kconfig	2018-11-06 21:58:21.000000000 +0000
++++ linux-4.19/drivers/media/pci/Kconfig	2018-11-10 16:16:19.512359323 +0000
+@@ -35,7 +35,6 @@
+ source "drivers/media/pci/saa7134/Kconfig"
+ source "drivers/media/pci/saa7164/Kconfig"
+ source "drivers/media/pci/cobalt/Kconfig"
+-source "drivers/media/pci/saa716x/Kconfig"
+ 
+ endif
+ 
+@@ -53,7 +52,6 @@
+ source "drivers/media/pci/smipcie/Kconfig"
+ source "drivers/media/pci/netup_unidvb/Kconfig"
+ source "drivers/media/pci/tbsecp3/Kconfig"
+-source "drivers/media/pci/tbscapture/Kconfig"
+ endif
+ 
+ source "drivers/media/pci/intel/ipu3/Kconfig"

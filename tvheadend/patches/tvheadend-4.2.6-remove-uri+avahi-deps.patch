@@ -1,0 +1,17 @@
+--- tvheadend-4.2.2.old/debian/control	2017-05-16 11:15:24.000000000 +0000
++++ tvheadend-4.2.2/debian/control	2017-06-11 15:15:38.925617949 +0000
+@@ -2,12 +2,12 @@
+ Section: video
+ Priority: extra
+ Maintainer: Adam Sutton <aps@tvheadend.org>
+-Build-Depends: debhelper (>= 7.0.50), pkg-config, gettext, libavahi-client-dev, libssl-dev, zlib1g-dev, wget, bzip2, git-core, liburiparser-dev, python, ca-certificates, cmake, dvb-apps
++Build-Depends: debhelper (>= 7.0.50), pkg-config, gettext, libssl-dev, zlib1g-dev, wget, bzip2, git-core, python, ca-certificates, cmake, dvb-apps
+ Standards-Version: 3.7.3
+ 
+ Package: tvheadend
+ Architecture: any
+-Depends: ${shlibs:Depends}, libavahi-client3, zlib1g, liburiparser1, dvb-apps, bzip2
++Depends: ${shlibs:Depends}, zlib1g, bzip2, dvb-apps
+ Recommends: xmltv-util
+ Enhances: showtime
+ Replaces: hts-tvheadend

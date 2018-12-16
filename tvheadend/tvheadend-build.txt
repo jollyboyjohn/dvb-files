@@ -1,0 +1,9 @@
+There's two patches in this repo - one to reduce the dependencies, another to increase CAM initialisation time (still needed in 4.2.6):
+- tvheadend-4.2.6-remove-uri+avahi-deps.patch
+- tvheadend-4.2.6-cam-init-fix.patch
+
+Building is as follows for a minimal Pi Zero / V1:
+$ AUTOBUILD_CONFIGURE_EXTRA="--cpu=arm1176jzf-s --arch=arm --disable-hdhomerun_static --disable-uriparser --disable-avahi --disable-dvbscan --disable-libav --disable-ffmpeg_static --disable-libx264  --disable-libvorbis --disable-libtheora --disable-libvpx --disable-libx265 --disable-bintray_cache" ./Autobuild.sh raspbianstretch-armhf
+
+Finally, here are the dependencies on the installation side:
+$ sudo apt-get install dvb-apps libzvbi0 dtv-scan-tables libzvbi-common

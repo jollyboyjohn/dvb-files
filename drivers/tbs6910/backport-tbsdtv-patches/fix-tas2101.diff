@@ -1,0 +1,10 @@
+--- linux_media-latest/drivers/media/dvb-frontends/tas2101.c	2018-11-06 21:58:21.000000000 +0000
++++ linux-4.19/drivers/media/dvb-frontends/tas2101.c	2018-11-11 12:48:12.098505743 +0000
+@@ -24,6 +24,7 @@
+ #include <linux/moduleparam.h>
+ #include <linux/init.h>
+ #include <linux/i2c-mux.h>
++#include <linux/version.h>
+ 
+ #include <media/dvb_frontend.h>
+ 

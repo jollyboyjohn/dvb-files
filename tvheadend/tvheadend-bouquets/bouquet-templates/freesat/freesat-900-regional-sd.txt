@@ -1,0 +1,26 @@
+BBC One Lon
+BBC One CI
+BBC One E Mid
+BBC One East E
+BBC One East W
+BBC One N West
+BBC One NE&C
+BBC One NI
+BBC One Oxford
+BBC One S East
+BBC One Scot
+BBC One South
+BBC One S West
+BBC One W Mid
+BBC One Wales
+BBC One West
+BBC One Yorks
+BBC One Yk&Li
+BBC Two Eng
+BBC Two NI
+BBC Two Scot
+BBC Two Wales
+STV
+STV2
+UTV
+UTV+1

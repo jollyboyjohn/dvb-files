@@ -1,0 +1,1446 @@
+diff -urN linux-4.17.1.orig/drivers/media/dvb-frontends/stv090x.c linux-4.17.1/drivers/media/dvb-frontends/stv090x.c
+--- linux-4.17.1.orig/drivers/media/dvb-frontends/stv090x.c	2018-06-11 21:43:19.000000000 +0100
++++ linux-4.17.1/drivers/media/dvb-frontends/stv090x.c	2018-06-16 09:49:41.754081291 +0100
+@@ -41,6 +41,10 @@
+ static unsigned int verbose;
+ module_param(verbose, int, 0644);
+ 
++static unsigned int ts_nosync=1;
++module_param(ts_nosync, int, 0644);
++MODULE_PARM_DESC(ts_nosync, "TS FIFO Minimum latence mode (default:on)");
++
+ /* internal params node */
+ struct stv090x_dev {
+ 	/* pointer for internal params, one for each pair of demods */
+@@ -3430,14 +3434,19 @@
+ 	return -1;
+ }
+ 
+-static int stv090x_set_pls(struct stv090x_state *state, u32 pls_code)
++static int stv090x_set_pls(struct stv090x_state *state, u8 pls_mode, u32 pls_code)
+ {
+-	dprintk(FE_DEBUG, 1, "Set Gold PLS code %d", pls_code);
+-	if (STV090x_WRITE_DEMOD(state, PLROOT0, pls_code & 0xff) < 0)
++	if (pls_mode == 0 && pls_code == 0)
++		pls_code = 1;
++	pls_mode &= 0x03;
++	pls_code &= 0x3FFFF;
++
++	dprintk(FE_DEBUG, 1, "Set PLS code %d (mode %d)", pls_code, pls_mode);
++	if (STV090x_WRITE_DEMOD(state, PLROOT2, (pls_mode<<2) | (pls_code>>16)) < 0)
+ 		goto err;
+-	if (STV090x_WRITE_DEMOD(state, PLROOT1, (pls_code >> 8) & 0xff) < 0)
++	if (STV090x_WRITE_DEMOD(state, PLROOT1, pls_code>>8) < 0)
+ 		goto err;
+-	if (STV090x_WRITE_DEMOD(state, PLROOT2, 0x04 | (pls_code >> 16)) < 0)
++	if (STV090x_WRITE_DEMOD(state, PLROOT0, pls_code) < 0)
+ 		goto err;
+ 	return 0;
+ err:
+@@ -3449,14 +3458,16 @@
+ {
+ 	u32 reg;
+ 
+-	if (mis < 0 || mis > 255) {
++	if (mis == NO_STREAM_ID_FILTER) {
+ 		dprintk(FE_DEBUG, 1, "Disable MIS filtering");
++		stv090x_set_pls(state, 0, 0);
+ 		reg = STV090x_READ_DEMOD(state, PDELCTRL1);
+ 		STV090x_SETFIELD_Px(reg, FILTER_EN_FIELD, 0x00);
+ 		if (STV090x_WRITE_DEMOD(state, PDELCTRL1, reg) < 0)
+ 			goto err;
+ 	} else {
+ 		dprintk(FE_DEBUG, 1, "Enable MIS filtering - %d", mis);
++		stv090x_set_pls(state, (mis>>26) & 0x3, (mis>>8) & 0x3FFFF);
+ 		reg = STV090x_READ_DEMOD(state, PDELCTRL1);
+ 		STV090x_SETFIELD_Px(reg, FILTER_EN_FIELD, 0x01);
+ 		if (STV090x_WRITE_DEMOD(state, PDELCTRL1, reg) < 0)
+@@ -3507,9 +3518,12 @@
+ 		state->search_range = 5000000;
+ 	}
+ 
+-	stv090x_set_pls(state, props->scrambling_sequence_index);
+ 	stv090x_set_mis(state, props->stream_id);
+ 
++	/* Set Gold code > 0 */
++	if (props->scrambling_sequence_index)
++	      stv090x_set_pls(state, 1, props->scrambling_sequence_index);
++
+ 	if (stv090x_algo(state) == STV090x_RANGEOK) {
+ 		dprintk(FE_DEBUG, 1, "Search success!");
+ 		return DVBFE_ALGO_SEARCH_SUCCESS;
+@@ -3521,109 +3535,6 @@
+ 	return DVBFE_ALGO_SEARCH_ERROR;
+ }
+ 
+-static int stv090x_read_status(struct dvb_frontend *fe, enum fe_status *status)
+-{
+-	struct stv090x_state *state = fe->demodulator_priv;
+-	u32 reg, dstatus;
+-	u8 search_state;
+-
+-	*status = 0;
+-
+-	dstatus = STV090x_READ_DEMOD(state, DSTATUS);
+-	if (STV090x_GETFIELD_Px(dstatus, CAR_LOCK_FIELD))
+-		*status |= FE_HAS_SIGNAL | FE_HAS_CARRIER;
+-
+-	reg = STV090x_READ_DEMOD(state, DMDSTATE);
+-	search_state = STV090x_GETFIELD_Px(reg, HEADER_MODE_FIELD);
+-
+-	switch (search_state) {
+-	case 0: /* searching */
+-	case 1: /* first PLH detected */
+-	default:
+-		dprintk(FE_DEBUG, 1, "Status: Unlocked (Searching ..)");
+-		break;
+-
+-	case 2: /* DVB-S2 mode */
+-		dprintk(FE_DEBUG, 1, "Delivery system: DVB-S2");
+-		if (STV090x_GETFIELD_Px(dstatus, LOCK_DEFINITIF_FIELD)) {
+-			reg = STV090x_READ_DEMOD(state, PDELSTATUS1);
+-			if (STV090x_GETFIELD_Px(reg, PKTDELIN_LOCK_FIELD)) {
+-				*status |= FE_HAS_VITERBI;
+-				reg = STV090x_READ_DEMOD(state, TSSTATUS);
+-				if (STV090x_GETFIELD_Px(reg, TSFIFO_LINEOK_FIELD))
+-					*status |= FE_HAS_SYNC | FE_HAS_LOCK;
+-			}
+-		}
+-		break;
+-
+-	case 3: /* DVB-S1/legacy mode */
+-		dprintk(FE_DEBUG, 1, "Delivery system: DVB-S");
+-		if (STV090x_GETFIELD_Px(dstatus, LOCK_DEFINITIF_FIELD)) {
+-			reg = STV090x_READ_DEMOD(state, VSTATUSVIT);
+-			if (STV090x_GETFIELD_Px(reg, LOCKEDVIT_FIELD)) {
+-				*status |= FE_HAS_VITERBI;
+-				reg = STV090x_READ_DEMOD(state, TSSTATUS);
+-				if (STV090x_GETFIELD_Px(reg, TSFIFO_LINEOK_FIELD))
+-					*status |= FE_HAS_SYNC | FE_HAS_LOCK;
+-			}
+-		}
+-		break;
+-	}
+-
+-	return 0;
+-}
+-
+-static int stv090x_read_per(struct dvb_frontend *fe, u32 *per)
+-{
+-	struct stv090x_state *state = fe->demodulator_priv;
+-
+-	s32 count_4, count_3, count_2, count_1, count_0, count;
+-	u32 reg, h, m, l;
+-	enum fe_status status;
+-
+-	stv090x_read_status(fe, &status);
+-	if (!(status & FE_HAS_LOCK)) {
+-		*per = 1 << 23; /* Max PER */
+-	} else {
+-		/* Counter 2 */
+-		reg = STV090x_READ_DEMOD(state, ERRCNT22);
+-		h = STV090x_GETFIELD_Px(reg, ERR_CNT2_FIELD);
+-
+-		reg = STV090x_READ_DEMOD(state, ERRCNT21);
+-		m = STV090x_GETFIELD_Px(reg, ERR_CNT21_FIELD);
+-
+-		reg = STV090x_READ_DEMOD(state, ERRCNT20);
+-		l = STV090x_GETFIELD_Px(reg, ERR_CNT20_FIELD);
+-
+-		*per = ((h << 16) | (m << 8) | l);
+-
+-		count_4 = STV090x_READ_DEMOD(state, FBERCPT4);
+-		count_3 = STV090x_READ_DEMOD(state, FBERCPT3);
+-		count_2 = STV090x_READ_DEMOD(state, FBERCPT2);
+-		count_1 = STV090x_READ_DEMOD(state, FBERCPT1);
+-		count_0 = STV090x_READ_DEMOD(state, FBERCPT0);
+-
+-		if ((!count_4) && (!count_3)) {
+-			count  = (count_2 & 0xff) << 16;
+-			count |= (count_1 & 0xff) <<  8;
+-			count |=  count_0 & 0xff;
+-		} else {
+-			count = 1 << 24;
+-		}
+-		if (count == 0)
+-			*per = 1;
+-	}
+-	if (STV090x_WRITE_DEMOD(state, FBERCPT4, 0) < 0)
+-		goto err;
+-	if (STV090x_WRITE_DEMOD(state, ERRCTRL2, 0xc1) < 0)
+-		goto err;
+-
+-	return 0;
+-err:
+-	dprintk(FE_ERROR, 1, "I/O error");
+-	return -1;
+-}
+-
+ static int stv090x_table_lookup(const struct stv090x_tab *tab, int max, int val)
+ {
+ 	int res = 0;
+@@ -3660,12 +3571,13 @@
+ 	return res;
+ }
+ 
+-static int stv090x_read_signal_strength(struct dvb_frontend *fe, u16 *strength)
++static int stv090x_read_rflevel(struct dvb_frontend *fe)
+ {
+ 	struct stv090x_state *state = fe->demodulator_priv;
++	struct dtv_frontend_properties *p = &fe->dtv_property_cache;
+ 	u32 reg;
+ 	s32 agc_0, agc_1, agc;
+-	s32 str;
++	s32 rflevel;
+ 
+ 	reg = STV090x_READ_DEMOD(state, AGCIQIN1);
+ 	agc_1 = STV090x_GETFIELD_Px(reg, AGCIQ_VALUE_FIELD);
+@@ -3673,25 +3585,27 @@
+ 	agc_0 = STV090x_GETFIELD_Px(reg, AGCIQ_VALUE_FIELD);
+ 	agc = MAKEWORD16(agc_1, agc_0);
+ 
+-	str = stv090x_table_lookup(stv090x_rf_tab,
++	rflevel = stv090x_table_lookup(stv090x_rf_tab,
+ 		ARRAY_SIZE(stv090x_rf_tab) - 1, agc);
+ 	if (agc > stv090x_rf_tab[0].read)
+-		str = 0;
++		rflevel = 0;
+ 	else if (agc < stv090x_rf_tab[ARRAY_SIZE(stv090x_rf_tab) - 1].read)
+-		str = -100;
+-	*strength = (str + 100) * 0xFFFF / 100;
++		rflevel = -100;
++
++	p->strength.len = 1;
++	p->strength.stat[0].scale = FE_SCALE_DECIBEL;
++	p->strength.stat[0].svalue = rflevel * 1000;
+ 
+ 	return 0;
+ }
+ 
+-static int stv090x_read_cnr(struct dvb_frontend *fe, u16 *cnr)
++static int stv090x_read_cnr(struct dvb_frontend *fe)
+ {
+ 	struct stv090x_state *state = fe->demodulator_priv;
++	struct dtv_frontend_properties *p = &fe->dtv_property_cache;
+ 	u32 reg_0, reg_1, reg, i;
+-	s32 val_0, val_1, val = 0;
++	s32 val_0, val_1, val = 0, snr = 0;
+ 	u8 lock_f;
+-	s32 div;
+-	u32 last;
+ 
+ 	switch (state->delsys) {
+ 	case STV090x_DVBS2:
+@@ -3708,13 +3622,8 @@
+ 				msleep(1);
+ 			}
+ 			val /= 16;
+-			last = ARRAY_SIZE(stv090x_s2cn_tab) - 1;
+-			div = stv090x_s2cn_tab[last].real -
+-			      stv090x_s2cn_tab[3].real;
+-			val = stv090x_table_lookup(stv090x_s2cn_tab, last, val);
+-			if (val < 0)
+-				val = 0;
+-			*cnr = val * 0xFFFF / div;
++			snr = stv090x_table_lookup(stv090x_s2cn_tab,
++				ARRAY_SIZE(stv090x_s2cn_tab) - 1, val);
+ 		}
+ 		break;
+ 
+@@ -3733,17 +3642,195 @@
+ 				msleep(1);
+ 			}
+ 			val /= 16;
+-			last = ARRAY_SIZE(stv090x_s1cn_tab) - 1;
+-			div = stv090x_s1cn_tab[last].real -
+-			      stv090x_s1cn_tab[0].real;
+-			val = stv090x_table_lookup(stv090x_s1cn_tab, last, val);
+-			*cnr = val * 0xFFFF / div;
++			snr = stv090x_table_lookup(stv090x_s1cn_tab,
++				ARRAY_SIZE(stv090x_s1cn_tab) - 1, val);
+ 		}
+ 		break;
+ 	default:
+ 		break;
+ 	}
+ 
++	p->cnr.len = 1;
++	p->cnr.stat[0].scale = FE_SCALE_DECIBEL;
++	p->cnr.stat[0].svalue = 100 * snr;
++
++	return 0;
++}
++
++static int stv090x_read_per(struct dvb_frontend *fe, enum fe_status status)
++{
++	struct stv090x_state *state = fe->demodulator_priv;
++	struct dtv_frontend_properties *p = &fe->dtv_property_cache;
++
++	s32 count_4, count_3, count_2, count_1, count_0, count;
++	u32 reg, h, m, l, per;
++
++	if (!(status & FE_HAS_LOCK)) {
++		count = 0;
++		per = 1 << 23; /* Max PER */
++	} else {
++		/* Counter 2 */
++		reg = STV090x_READ_DEMOD(state, ERRCNT22);
++		h = STV090x_GETFIELD_Px(reg, ERR_CNT2_FIELD);
++
++		reg = STV090x_READ_DEMOD(state, ERRCNT21);
++		m = STV090x_GETFIELD_Px(reg, ERR_CNT21_FIELD);
++
++		reg = STV090x_READ_DEMOD(state, ERRCNT20);
++		l = STV090x_GETFIELD_Px(reg, ERR_CNT20_FIELD);
++
++		per = ((h << 16) | (m << 8) | l);
++
++		count_4 = STV090x_READ_DEMOD(state, FBERCPT4);
++		count_3 = STV090x_READ_DEMOD(state, FBERCPT3);
++		count_2 = STV090x_READ_DEMOD(state, FBERCPT2);
++		count_1 = STV090x_READ_DEMOD(state, FBERCPT1);
++		count_0 = STV090x_READ_DEMOD(state, FBERCPT0);
++
++		if ((!count_4) && (!count_3)) {
++			count  = (count_2 & 0xff) << 16;
++			count |= (count_1 & 0xff) <<  8;
++			count |=  count_0 & 0xff;
++		} else {
++			count = 1 << 24;
++		}
++		if (count == 0)
++			per = 1;
++	}
++	if (STV090x_WRITE_DEMOD(state, FBERCPT4, 0) < 0)
++		goto err;
++	if (STV090x_WRITE_DEMOD(state, ERRCTRL2, 0xc1) < 0)
++		goto err;
++
++	p->post_bit_error.len = 1;
++	p->post_bit_error.stat[0].scale = FE_SCALE_COUNTER;
++	p->post_bit_error.stat[0].uvalue = per;
++	p->post_bit_count.len = 1;
++	p->post_bit_count.stat[0].scale = FE_SCALE_COUNTER;
++	p->post_bit_count.stat[0].uvalue = count;
++
++	return 0;
++err:
++	dprintk(FE_ERROR, 1, "I/O error");
++	return -1;
++}
++
++static int stv090x_read_status(struct dvb_frontend *fe, enum fe_status *status)
++{
++	struct stv090x_state *state = fe->demodulator_priv;
++	struct dtv_frontend_properties *p = &fe->dtv_property_cache;
++	u32 reg, dstatus;
++	u8 search_state;
++
++	*status = FE_HAS_SIGNAL;
++	stv090x_read_rflevel(fe);
++
++	dstatus = STV090x_READ_DEMOD(state, DSTATUS);
++	if (STV090x_GETFIELD_Px(dstatus, CAR_LOCK_FIELD))
++		*status |= FE_HAS_CARRIER;
++	
++	reg = STV090x_READ_DEMOD(state, DMDSTATE);
++	search_state = STV090x_GETFIELD_Px(reg, HEADER_MODE_FIELD);
++
++	switch (search_state) {
++	case 0: /* searching */
++	case 1: /* first PLH detected */
++	default:
++		dprintk(FE_DEBUG, 1, "Status: Unlocked (Searching ..)");
++		break;
++
++	case 2: /* DVB-S2 mode */
++		dprintk(FE_DEBUG, 1, "Delivery system: DVB-S2");
++		if (STV090x_GETFIELD_Px(dstatus, LOCK_DEFINITIF_FIELD)) {
++			reg = STV090x_READ_DEMOD(state, PDELSTATUS1);
++			if (STV090x_GETFIELD_Px(reg, PKTDELIN_LOCK_FIELD)) {
++				*status |= FE_HAS_VITERBI;
++				reg = STV090x_READ_DEMOD(state, TSSTATUS);
++				if (STV090x_GETFIELD_Px(reg, TSFIFO_LINEOK_FIELD))
++					*status |= FE_HAS_VITERBI | FE_HAS_SYNC | FE_HAS_LOCK;
++			}
++		}
++		break;
++
++	case 3: /* DVB-S1/legacy mode */
++		dprintk(FE_DEBUG, 1, "Delivery system: DVB-S");
++		if (STV090x_GETFIELD_Px(dstatus, LOCK_DEFINITIF_FIELD)) {
++			reg = STV090x_READ_DEMOD(state, VSTATUSVIT);
++			if (STV090x_GETFIELD_Px(reg, LOCKEDVIT_FIELD)) {
++				*status |= FE_HAS_VITERBI;
++				reg = STV090x_READ_DEMOD(state, TSSTATUS);
++				if (STV090x_GETFIELD_Px(reg, TSFIFO_LINEOK_FIELD))
++					*status |= FE_HAS_VITERBI | FE_HAS_SYNC | FE_HAS_LOCK;
++			}
++		}
++		break;
++	}
++
++	if (*status & FE_HAS_LOCK) {
++		stv090x_read_cnr(fe);
++		stv090x_read_per(fe, *status);
++	}
++	else {
++		p->cnr.stat[0].scale = FE_SCALE_NOT_AVAILABLE;
++		p->post_bit_error.stat[0].scale = FE_SCALE_NOT_AVAILABLE;
++		p->post_bit_count.stat[0].scale = FE_SCALE_NOT_AVAILABLE;
++	}
++
++	if (state->config->set_lock_led)
++		state->config->set_lock_led(fe, *status & FE_HAS_LOCK);
++
++	return 0;
++}
++
++static int stv090x_read_snr(struct dvb_frontend *fe, u16 *snr)
++{
++	struct dtv_frontend_properties *p = &fe->dtv_property_cache;
++
++	if (p->cnr.stat[0].scale == FE_SCALE_DECIBEL) {
++		 *snr = (s32)p->cnr.stat[0].svalue / 100;
++		 if (*snr > 200)
++			  *snr = 0xffff;
++		 else
++			  *snr *= 328;
++	} else *snr = 0;
++
++	return 0;
++}
++
++static int stv090x_read_ber(struct dvb_frontend *fe, u32 *ber)
++{
++	struct dtv_frontend_properties *p = &fe->dtv_property_cache;
++
++	if ( p->post_bit_error.stat[0].scale == FE_SCALE_COUNTER &&
++		p->post_bit_count.stat[0].scale == FE_SCALE_COUNTER )	  
++	      *ber = (u32)p->post_bit_count.stat[0].uvalue ? (u32)p->post_bit_error.stat[0].uvalue / (u32)p->post_bit_count.stat[0].uvalue : 0;
++
++	return 0;
++}
++
++static int stv090x_read_signal_strength(struct dvb_frontend *fe, u16 *strength)
++{
++	struct dtv_frontend_properties *p = &fe->dtv_property_cache;
++
++	*strength = p->strength.stat[0].scale == FE_SCALE_DECIBEL ? ((100000 + (s32)p->strength.stat[0].svalue) / 1000) * 656 : 0;
++
++	return 0;
++}
++
++static int stv090x_read_ucblocks(struct dvb_frontend *fe, u32 *ucblocks)
++{
++	struct stv090x_state *state = fe->demodulator_priv;
++	u8 err0, err1;
++
++	*ucblocks = 0;
++	switch (state->delsys) {
++	case STV090x_DVBS2:
++		err0 = STV090x_READ_DEMOD(state, UPCRCKO0);
++		err1 = STV090x_READ_DEMOD(state, UPCRCKO1);
++		*ucblocks = (err1 << 8) | err0;
++	default:
++		break;
++	}
+ 	return 0;
+ }
+ 
+@@ -3922,6 +4009,9 @@
+ 	u32 reg;
+ 	u8 full_standby = 0;
+ 
++	if (state->config->set_lock_led)
++		state->config->set_lock_led(fe, 0);
++
+ 	if (stv090x_i2c_gate_ctrl(state, 1) < 0)
+ 		goto err;
+ 
+@@ -4153,6 +4243,9 @@
+ {
+ 	struct stv090x_state *state = fe->demodulator_priv;
+ 
++	if (state->config->set_lock_led)
++		state->config->set_lock_led(fe, 0);
++
+ 	state->internal->num_used--;
+ 	if (state->internal->num_used <= 0) {
+ 
+@@ -4557,6 +4650,30 @@
+ 			goto err;
+ 	}
+ 
++	if (ts_nosync)
++	{
++		dprintk(FE_DEBUG, 1, "TS FIFO Minimum Latence mode\n");
++		reg = stv090x_read_reg(state, STV090x_P1_TSSTATEM);
++		STV090x_SETFIELD_Px(reg, TSOUT_NOSYNC, 1);
++		if (stv090x_write_reg(state, STV090x_P1_TSSTATEM, reg) < 0)
++			goto err;
++
++		reg = stv090x_read_reg(state, STV090x_P2_TSSTATEM);
++		STV090x_SETFIELD_Px(reg, TSOUT_NOSYNC, 1);
++		if (stv090x_write_reg(state, STV090x_P2_TSSTATEM, reg) < 0)
++			goto err;
++
++		reg = stv090x_read_reg(state, STV090x_P1_TSSYNC);
++		STV090x_SETFIELD_Px(reg, TSFIFO_SYNCMODE, 2);
++		if (stv090x_write_reg(state, STV090x_P1_TSSYNC, reg) < 0)
++			goto err;
++
++		reg = stv090x_read_reg(state, STV090x_P2_TSSYNC);
++		STV090x_SETFIELD_Px(reg, TSFIFO_SYNCMODE, 2);
++		if (stv090x_write_reg(state, STV090x_P2_TSSYNC, reg) < 0)
++			goto err;
++	}
++
+ 	reg = stv090x_read_reg(state, STV090x_P2_TSCFGH);
+ 	STV090x_SETFIELD_Px(reg, RST_HWARE_FIELD, 0x01);
+ 	if (stv090x_write_reg(state, STV090x_P2_TSCFGH, reg) < 0)
+@@ -4680,6 +4797,20 @@
+ 			goto err;
+ 	}
+ 
++	if (ts_nosync)
++	{
++		dprintk(FE_DEBUG, 1, "TS FIFO Minimum Latence mode\n");
++		reg = stv090x_read_reg(state, STV090x_P1_TSSTATEM);
++		STV090x_SETFIELD_Px(reg, TSOUT_NOSYNC, 1);
++		if (stv090x_write_reg(state, STV090x_P1_TSSTATEM, reg) < 0)
++			goto err;
++
++		reg = stv090x_read_reg(state, STV090x_P1_TSSYNC);
++		STV090x_SETFIELD_Px(reg, TSFIFO_SYNCMODE, 2);
++		if (stv090x_write_reg(state, STV090x_P1_TSSYNC, reg) < 0)
++			goto err;
++	}
++
+ 	reg = stv090x_read_reg(state, STV090x_P1_TSCFGH);
+ 	STV090x_SETFIELD_Px(reg, RST_HWARE_FIELD, 0x01);
+ 	if (stv090x_write_reg(state, STV090x_P1_TSCFGH, reg) < 0)
+@@ -4930,9 +5061,10 @@
+ 
+ 	.search				= stv090x_search,
+ 	.read_status			= stv090x_read_status,
+-	.read_ber			= stv090x_read_per,
+ 	.read_signal_strength		= stv090x_read_signal_strength,
+-	.read_snr			= stv090x_read_cnr,
++	.read_snr			= stv090x_read_snr,
++	.read_ber			= stv090x_read_ber,
++	.read_ucblocks			= stv090x_read_ucblocks,
+ };
+ 
+ 
+diff -urN linux-4.17.1.orig/drivers/media/dvb-frontends/stv090x.h linux-4.17.1/drivers/media/dvb-frontends/stv090x.h
+--- linux-4.17.1.orig/drivers/media/dvb-frontends/stv090x.h	2018-06-11 21:43:19.000000000 +0100
++++ linux-4.17.1/drivers/media/dvb-frontends/stv090x.h	2018-06-16 09:51:26.385961318 +0100
+@@ -89,21 +89,23 @@
+ 
+ 	bool diseqc_envelope_mode;
+ 
+-	int (*tuner_init)(struct dvb_frontend *fe);
+-	int (*tuner_sleep)(struct dvb_frontend *fe);
+-	int (*tuner_set_mode)(struct dvb_frontend *fe, enum tuner_mode mode);
+-	int (*tuner_set_frequency)(struct dvb_frontend *fe, u32 frequency);
+-	int (*tuner_get_frequency)(struct dvb_frontend *fe, u32 *frequency);
+-	int (*tuner_set_bandwidth)(struct dvb_frontend *fe, u32 bandwidth);
+-	int (*tuner_get_bandwidth)(struct dvb_frontend *fe, u32 *bandwidth);
+-	int (*tuner_set_bbgain)(struct dvb_frontend *fe, u32 gain);
+-	int (*tuner_get_bbgain)(struct dvb_frontend *fe, u32 *gain);
+-	int (*tuner_set_refclk)(struct dvb_frontend *fe, u32 refclk);
+-	int (*tuner_get_status)(struct dvb_frontend *fe, u32 *status);
+-	void (*tuner_i2c_lock)(struct dvb_frontend *fe, int lock);
++	/* Hook for Lock LED */
++	void (*set_lock_led) (struct dvb_frontend *fe, int offon);
++	int (*tuner_init) (struct dvb_frontend *fe);
++	int (*tuner_sleep) (struct dvb_frontend *fe);
++	int (*tuner_set_mode) (struct dvb_frontend *fe, enum tuner_mode mode);
++	int (*tuner_set_frequency) (struct dvb_frontend *fe, u32 frequency);
++	int (*tuner_get_frequency) (struct dvb_frontend *fe, u32 *frequency);
++	int (*tuner_set_bandwidth) (struct dvb_frontend *fe, u32 bandwidth);
++	int (*tuner_get_bandwidth) (struct dvb_frontend *fe, u32 *bandwidth);
++	int (*tuner_set_bbgain) (struct dvb_frontend *fe, u32 gain);
++	int (*tuner_get_bbgain) (struct dvb_frontend *fe, u32 *gain);
++	int (*tuner_set_refclk)  (struct dvb_frontend *fe, u32 refclk);
++	int (*tuner_get_status) (struct dvb_frontend *fe, u32 *status);
++	void (*tuner_i2c_lock) (struct dvb_frontend *fe, int lock);
+ 
+ 	/* dir = 0 -> output, dir = 1 -> input/open-drain */
+-	int (*set_gpio)(struct dvb_frontend *fe, u8 gpio, u8 dir, u8 value,
++	int (*set_gpio) (struct dvb_frontend *fe, u8 gpio, u8 dir, u8 value,
+ 			u8 xor_value);
+ };
+ 
+diff -urN linux-4.17.1.orig/drivers/media/dvb-frontends/stv090x_reg.h linux-4.17.1/drivers/media/dvb-frontends/stv090x_reg.h
+--- linux-4.17.1.orig/drivers/media/dvb-frontends/stv090x_reg.h	2018-06-11 21:43:19.000000000 +0100
++++ linux-4.17.1/drivers/media/dvb-frontends/stv090x_reg.h	2018-06-16 09:52:45.568838330 +0100
+@@ -2104,6 +2104,14 @@
+ #define STV090x_WIDTH_Px_TSDIL_ON_FIELD			1
+ #define STV090x_OFFST_Px_TSRS_ON_FIELD			5
+ #define STV090x_WIDTH_Px_TSRS_ON_FIELD			1
++#define STV090x_OFFST_Px_TSDESCRAMB_ON			4
++#define STV090x_WIDTH_Px_TSDESCRAMB_ON			1
++#define STV090x_OFFST_Px_TSFRAME_MODE			3
++#define STV090x_WIDTH_Px_TSFRAME_MODE			1
++#define STV090x_OFFST_Px_TS_DISABLE			2
++#define STV090x_WIDTH_Px_TS_DISABLE			1
++#define STV090x_OFFST_Px_TSOUT_NOSYNC			0
++#define STV090x_WIDTH_Px_TSOUT_NOSYNC			1
+ 
+ #define STV090x_Px_TSCFGH(__x)				(0xF572 - (__x - 1) * 0x200)
+ #define STV090x_P1_TSCFGH				STV090x_Px_TSCFGH(1)
+@@ -2147,6 +2155,14 @@
+ #define STV090x_OFFST_Px_TSFIFO_DPUNACT_FIELD		1
+ #define STV090x_WIDTH_Px_TSFIFO_DPUNACT_FIELD		1
+ 
++#define STV090x_Px_TSSYNC(__x)				(0xF575 - (__x - 1) * 0x200)
++#define STV090x_P1_TSSYNC				STV090x_Px_TSSYNC(1)
++#define STV090x_P2_TSSYNC				STV090x_Px_TSSYNC(2)
++#define STV090x_OFFST_Px_TSFIFO_FISCR3B			5
++#define STV090x_WIDTH_Px_TSFIFO_FISCR3B			2
++#define STV090x_OFFST_Px_TSFIFO_SYNCMODE		3
++#define STV090x_WIDTH_Px_TSFIFO_SYNCMODE		2
++
+ #define STV090x_Px_TSINSDELH(__x)			(0xF576 - (__x - 1) * 0x200)
+ #define STV090x_P1_TSINSDELH				STV090x_Px_TSINSDELH(1)
+ #define STV090x_P2_TSINSDELH				STV090x_Px_TSINSDELH(2)
+diff -urN linux-4.17.1.orig/drivers/media/usb/dvb-usb/Kconfig linux-4.17.1/drivers/media/usb/dvb-usb/Kconfig
+--- linux-4.17.1.orig/drivers/media/usb/dvb-usb/Kconfig	2018-06-11 21:43:19.000000000 +0100
++++ linux-4.17.1/drivers/media/usb/dvb-usb/Kconfig	2018-06-15 21:27:02.338520785 +0100
+@@ -333,3 +333,13 @@
+ 	select DVB_STV6110x if MEDIA_SUBDRV_AUTOSELECT
+ 	help
+ 	  Say Y here to support the Technisat USB2 DVB-S/S2 device
++
++config DVB_USB_TBSQBOX2CI
++	tristate "TurboSight QBOX2 CI DVB-S2 USB2.0 support"
++	depends on DVB_USB
++	select DVB_PLL if MEDIA_SUBDRV_AUTOSELECT
++	select DVB_STV090x if MEDIA_SUBDRV_AUTOSELECT
++	select DVB_STB6100 if MEDIA_SUBDRV_AUTOSELECT
++	help
++	  Say Y here to support the TurboSight QBOX2 CI DVB-S USB2.0 receivers
++
+diff -urN linux-4.17.1.orig/drivers/media/usb/dvb-usb/Makefile linux-4.17.1/drivers/media/usb/dvb-usb/Makefile
+--- linux-4.17.1.orig/drivers/media/usb/dvb-usb/Makefile	2018-06-11 21:43:19.000000000 +0100
++++ linux-4.17.1/drivers/media/usb/dvb-usb/Makefile	2018-06-15 21:25:21.643535064 +0100
+@@ -80,6 +80,9 @@
+ dvb-usb-technisat-usb2-objs := technisat-usb2.o
+ obj-$(CONFIG_DVB_USB_TECHNISAT_USB2) += dvb-usb-technisat-usb2.o
+ 
++dvb-usb-tbsqbox2ci-objs = tbs-qbox2ci.o
++obj-$(CONFIG_DVB_USB_TBSQBOX2CI) += dvb-usb-tbsqbox2ci.o
++
+ ccflags-y += -I$(srctree)/drivers/media/dvb-frontends/
+ # due to tuner-xc3028
+ ccflags-y += -I$(srctree)/drivers/media/tuners
+diff -urN linux-4.17.1.orig/drivers/media/usb/dvb-usb/tbs-qbox2ci.c linux-4.17.1/drivers/media/usb/dvb-usb/tbs-qbox2ci.c
+--- linux-4.17.1.orig/drivers/media/usb/dvb-usb/tbs-qbox2ci.c	1970-01-01 01:00:00.000000000 +0100
++++ linux-4.17.1/drivers/media/usb/dvb-usb/tbs-qbox2ci.c	2018-06-15 21:24:14.825553425 +0100
+@@ -0,0 +1,792 @@
++/*
++ * TurboSight (TBS) Qbox DVB-S2 CI driver
++ *
++ * Copyright (c) 2010 Konstantin Dimitrov <kosio.dimitrov@gmail.com>
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License as published by the
++ * Free Software Foundation, version 2.
++ *
++ */
++
++#include <linux/version.h>
++#include "tbs-qbox2ci.h"
++#include "stv6110x.h"
++#include "stv090x.h"
++#include "stb6100.h"
++#include "stb6100_cfg.h"
++
++#include <media/dvb_ca_en50221.h>
++
++#define TBSQBOX_READ_MSG 0
++#define TBSQBOX_WRITE_MSG 1
++#define TBSQBOX_LED_CTRL (0x1b00)
++
++/* on my own*/
++#define TBSQBOX_VOLTAGE_CTRL (0x1800)
++#define TBSQBOX_RC_QUERY (0x1a00)
++
++struct tbsqbox2ci_state {
++	struct dvb_ca_en50221 ca;
++	struct mutex ca_mutex;
++};
++
++/* debug */
++static int dvb_usb_tbsqbox2ci_debug;
++module_param_named(debug, dvb_usb_tbsqbox2ci_debug, int, 0644);
++MODULE_PARM_DESC(debug, "set debugging level (1=info 2=xfer (or-able))." 
++							DVB_USB_DEBUG_STATUS);
++
++DVB_DEFINE_MOD_OPT_ADAPTER_NR(adapter_nr);
++
++static int tbsqbox2ci_op_rw(struct usb_device *dev, u8 request, u16 value,
++				u16 index, u8 * data, u16 len, int flags)
++{
++	int ret;
++	void *u8buf;
++
++	unsigned int pipe = (flags == TBSQBOX_READ_MSG) ?
++				usb_rcvctrlpipe(dev, 0) : usb_sndctrlpipe(dev, 0);
++	u8 request_type = (flags == TBSQBOX_READ_MSG) ? USB_DIR_IN : USB_DIR_OUT;
++
++	u8buf = kmalloc(len, GFP_KERNEL);
++	if (!u8buf)
++		return -ENOMEM;
++
++	if (flags == TBSQBOX_WRITE_MSG)
++		memcpy(u8buf, data, len);
++	ret = usb_control_msg(dev, pipe, request, request_type | USB_TYPE_VENDOR,
++				value, index , u8buf, len, 2000);
++
++	if (flags == TBSQBOX_READ_MSG)
++		memcpy(data, u8buf, len);
++	kfree(u8buf);
++	return ret;
++}
++
++static int tbsqbox2ci_read_attribute_mem(struct dvb_ca_en50221 *ca,
++                                                	int slot, int address)
++{
++	struct dvb_usb_device *d = (struct dvb_usb_device *)ca->data;
++	struct tbsqbox2ci_state *state = (struct tbsqbox2ci_state *)d->priv;
++	u8 buf[4], rbuf[3];
++	int ret;
++
++	if (0 != slot)
++		return -EINVAL;
++
++	buf[0] = 1;
++	buf[1] = 0;
++	buf[2] = (address >> 8) & 0x0f;
++	buf[3] = address;
++
++	//msleep(10);
++
++	mutex_lock(&state->ca_mutex);
++
++	ret = tbsqbox2ci_op_rw(d->udev, 0xa4, 0, 0,
++						buf, 4, TBSQBOX_WRITE_MSG);
++
++	//msleep(1);
++
++	ret = tbsqbox2ci_op_rw(d->udev, 0xa5, 0, 0,
++						rbuf, 1, TBSQBOX_READ_MSG);
++
++	mutex_unlock(&state->ca_mutex);
++
++	if (ret < 0)
++		return ret;
++
++	return rbuf[0];
++}
++
++static int tbsqbox2ci_write_attribute_mem(struct dvb_ca_en50221 *ca,
++						int slot, int address, u8 value)
++{
++	struct dvb_usb_device *d = (struct dvb_usb_device *)ca->data;
++	struct tbsqbox2ci_state *state = (struct tbsqbox2ci_state *)d->priv;
++	u8 buf[5];//, rbuf[1];
++	int ret;
++
++	if (0 != slot)
++		return -EINVAL;
++
++	buf[0] = 1;
++	buf[1] = 0;
++	buf[2] = (address >> 8) & 0x0f;
++	buf[3] = address;
++	buf[4] = value;
++
++	mutex_lock(&state->ca_mutex);
++
++	ret = tbsqbox2ci_op_rw(d->udev, 0xa2, 0, 0,
++						buf, 5, TBSQBOX_WRITE_MSG);
++
++	//msleep(1);
++
++	//ret = tbsqbox2ci_op_rw(d->udev, 0xa5, 0, 0,
++	//					rbuf, 1, TBSQBOX_READ_MSG);
++
++	mutex_unlock(&state->ca_mutex);
++
++	if (ret < 0)
++		return ret;
++
++	return 0;
++}
++
++static int tbsqbox2ci_read_cam_control(struct dvb_ca_en50221 *ca, int slot, 
++								u8 address)
++{
++	struct dvb_usb_device *d = (struct dvb_usb_device *)ca->data;
++	struct tbsqbox2ci_state *state = (struct tbsqbox2ci_state *)d->priv;
++	u8 buf[4], rbuf[1];
++	int ret;
++
++	if (0 != slot)
++		return -EINVAL;
++
++	buf[0] = 1;
++	buf[1] = 1;
++	buf[2] = (address >> 8) & 0x0f;
++	buf[3] = address;
++
++	mutex_lock(&state->ca_mutex);
++
++	ret = tbsqbox2ci_op_rw(d->udev, 0xa4, 0, 0,
++						buf, 4, TBSQBOX_WRITE_MSG);
++
++	//msleep(10);
++
++	ret = tbsqbox2ci_op_rw(d->udev, 0xa5, 0, 0,
++						rbuf, 1, TBSQBOX_READ_MSG);
++
++	mutex_unlock(&state->ca_mutex);
++
++	if (ret < 0)
++		return ret;
++
++	return rbuf[0];
++}
++
++static int tbsqbox2ci_write_cam_control(struct dvb_ca_en50221 *ca, int slot, 
++							u8 address, u8 value)
++{
++	struct dvb_usb_device *d = (struct dvb_usb_device *)ca->data;
++	struct tbsqbox2ci_state *state = (struct tbsqbox2ci_state *)d->priv;
++	u8 buf[5];//, rbuf[1];
++	int ret;
++
++	if (0 != slot)
++		return -EINVAL;
++
++	buf[0] = 1;
++	buf[1] = 1;
++	buf[2] = (address >> 8) & 0x0f;
++	buf[3] = address;
++	buf[4] = value;
++
++	mutex_lock(&state->ca_mutex);
++
++	ret = tbsqbox2ci_op_rw(d->udev, 0xa2, 0, 0,
++						buf, 5, TBSQBOX_WRITE_MSG);
++
++	//msleep(1);
++
++	//ret = tbsqbox2ci_op_rw(d->udev, 0xa5, 0, 0,
++	//					rbuf, 1, TBSQBOX_READ_MSG);
++
++	mutex_unlock(&state->ca_mutex);
++
++	if (ret < 0)
++		return ret;
++
++	return 0;
++}
++
++static int tbsqbox2ci_set_video_port(struct dvb_ca_en50221 *ca, 
++							int slot, int enable)
++{
++	struct dvb_usb_device *d = (struct dvb_usb_device *)ca->data;
++	struct tbsqbox2ci_state *state = (struct tbsqbox2ci_state *)d->priv;
++	u8 buf[2];
++	int ret;
++
++	if (0 != slot)
++		return -EINVAL;
++
++	buf[0] = 2;
++	buf[1] = enable;
++
++	mutex_lock(&state->ca_mutex);
++
++	ret = tbsqbox2ci_op_rw(d->udev, 0xa6, 0, 0,
++						buf, 2, TBSQBOX_WRITE_MSG);
++
++	mutex_unlock(&state->ca_mutex);
++
++	if (ret < 0)
++		return ret;
++
++	if (enable != buf[1]) {
++		err("CI not %sabled.", enable ? "en" : "dis");
++		return -EIO;
++	}
++
++	info("CI %sabled.", enable ? "en" : "dis");
++	return 0;
++}
++
++static int tbsqbox2ci_slot_shutdown(struct dvb_ca_en50221 *ca, int slot)
++{
++	return tbsqbox2ci_set_video_port(ca, slot, /* enable */ 0);
++}
++
++static int tbsqbox2ci_slot_ts_enable(struct dvb_ca_en50221 *ca, int slot)
++{
++	return tbsqbox2ci_set_video_port(ca, slot, /* enable */ 1);
++}
++
++static int tbsqbox2ci_slot_reset(struct dvb_ca_en50221 *ca, int slot)
++{
++	struct dvb_usb_device *d = (struct dvb_usb_device *)ca->data;
++	struct tbsqbox2ci_state *state = (struct tbsqbox2ci_state *)d->priv;
++	u8 buf[2];
++	int ret;
++
++	if (0 != slot) {
++		return -EINVAL;
++	}
++
++	buf[0] = 1;
++	buf[1] = 0;
++
++	mutex_lock (&state->ca_mutex);
++
++	ret = tbsqbox2ci_op_rw(d->udev, 0xa6, 0, 0,
++						buf, 2, TBSQBOX_WRITE_MSG);
++
++	msleep (5);
++
++	buf[1] = 1;
++
++	ret = tbsqbox2ci_op_rw(d->udev, 0xa6, 0, 0,
++						buf, 2, TBSQBOX_WRITE_MSG);
++
++	msleep (1400);
++
++	mutex_unlock (&state->ca_mutex);
++
++	if (ret < 0)
++		return ret;
++
++	return 0;
++}
++
++static int tbsqbox2ci_poll_slot_status(struct dvb_ca_en50221 *ca,
++							int slot, int open)
++{
++	struct dvb_usb_device *d = (struct dvb_usb_device *)ca->data;
++	struct tbsqbox2ci_state *state = (struct tbsqbox2ci_state *)d->priv;
++	u8 buf[3];
++
++	if (0 != slot)
++		return -EINVAL;
++
++	mutex_lock(&state->ca_mutex);
++
++	tbsqbox2ci_op_rw(d->udev, 0xa8, 0, 0,
++					buf, 3, TBSQBOX_READ_MSG);
++
++	mutex_unlock(&state->ca_mutex);
++
++	if ((1 == buf[2]) && (1 == buf[1]) && (0xa9 == buf[0])) {
++				return (DVB_CA_EN50221_POLL_CAM_PRESENT |
++						DVB_CA_EN50221_POLL_CAM_READY);
++	} else {
++		return 0;
++	}
++}
++
++static void tbsqbox2ci_uninit(struct dvb_usb_device *d)
++{
++	struct tbsqbox2ci_state *state;
++
++	if (NULL == d)
++		return;
++
++	state = (struct tbsqbox2ci_state *)d->priv;
++	if (NULL == state)
++		return;
++
++	if (NULL == state->ca.data)
++		return;
++
++	/* Error ignored. */
++	tbsqbox2ci_set_video_port(&state->ca, /* slot */ 0, /* enable */ 0);
++
++	dvb_ca_en50221_release(&state->ca);
++
++	memset(&state->ca, 0, sizeof(state->ca));
++}
++
++static int tbsqbox2ci_init(struct dvb_usb_adapter *a)
++{
++
++	struct dvb_usb_device *d = a->dev;
++	struct tbsqbox2ci_state *state = (struct tbsqbox2ci_state *)d->priv;
++	int ret;
++
++	state->ca.owner = THIS_MODULE;
++	state->ca.read_attribute_mem = tbsqbox2ci_read_attribute_mem;
++	state->ca.write_attribute_mem = tbsqbox2ci_write_attribute_mem;
++	state->ca.read_cam_control = tbsqbox2ci_read_cam_control;
++	state->ca.write_cam_control = tbsqbox2ci_write_cam_control;
++	state->ca.slot_reset = tbsqbox2ci_slot_reset;
++	state->ca.slot_shutdown = tbsqbox2ci_slot_shutdown;
++	state->ca.slot_ts_enable = tbsqbox2ci_slot_ts_enable;
++	state->ca.poll_slot_status = tbsqbox2ci_poll_slot_status;
++	state->ca.data = d;
++
++	ret = dvb_ca_en50221_init (&a->dvb_adap, &state->ca,
++						/* flags */ 0, /* n_slots */ 1);
++
++	if (0 != ret) {
++		err ("Cannot initialize CI: Error %d.", ret);
++		memset (&state->ca, 0, sizeof (state->ca));
++		return ret;
++	}
++
++	info ("CI initialized.");
++
++	ret = tbsqbox2ci_poll_slot_status(&state->ca, 0, 0);
++	if (0 == ret)
++		tbsqbox2ci_set_video_port(&state->ca, /* slot */ 0, /* enable */ 0);
++
++	return 0;
++}
++
++/* I2C */
++static int tbsqbox2ci_i2c_transfer(struct i2c_adapter *adap, 
++					struct i2c_msg msg[], int num)
++{
++	struct dvb_usb_device *d = i2c_get_adapdata(adap);
++	struct tbsqbox2ci_state *state = (struct tbsqbox2ci_state *)d->priv;
++	int i = 0;
++	u8 buf6[20];
++	u8 inbuf[20];
++
++	if (!d)
++		return -ENODEV;
++
++	mutex_lock(&state->ca_mutex);
++
++	if (mutex_lock_interruptible(&d->i2c_mutex) < 0)
++		return -EAGAIN;
++
++	switch (num) {
++	case 2:
++		buf6[0]=msg[1].len;//lenth
++		buf6[1]=msg[0].addr<<1;//demod addr
++		//register
++		buf6[2] = msg[0].buf[0];
++		buf6[3] = msg[0].buf[1];
++
++		tbsqbox2ci_op_rw(d->udev, 0x92, 0, 0,
++					buf6, 4, TBSQBOX_WRITE_MSG);
++		//msleep(5);
++		tbsqbox2ci_op_rw(d->udev, 0x91, 0, 0,
++					inbuf, msg[1].len, TBSQBOX_READ_MSG);
++		memcpy(msg[1].buf, inbuf, msg[1].len);
++		break;
++	case 1:
++		switch (msg[0].addr) {
++		case 0x6a:
++		case 0x61:
++		case 0x60:
++			if (msg[0].flags == 0) {
++				buf6[0] = msg[0].len+1;//lenth
++				buf6[1] = msg[0].addr<<1;//addr
++				for(i=0;i<msg[0].len;i++) {
++					buf6[2+i] = msg[0].buf[i];//register
++				}
++				tbsqbox2ci_op_rw(d->udev, 0x80, 0, 0,
++					buf6, msg[0].len+2, TBSQBOX_WRITE_MSG);
++			} else {
++				buf6[0] = msg[0].len;//length
++				buf6[1] = msg[0].addr<<1;//addr
++				buf6[2] = 0x00;
++				tbsqbox2ci_op_rw(d->udev, 0x90, 0, 0,
++						buf6, 3, TBSQBOX_WRITE_MSG);
++				//msleep(5);
++				tbsqbox2ci_op_rw(d->udev, 0x91, 0, 0,
++					inbuf, buf6[0], TBSQBOX_READ_MSG);
++				memcpy(msg[0].buf, inbuf, msg[0].len);
++			}
++			//msleep(3);
++			break;
++		case (TBSQBOX_RC_QUERY):
++			tbsqbox2ci_op_rw(d->udev, 0xb8, 0, 0,
++					buf6, 4, TBSQBOX_READ_MSG);
++			msg[0].buf[0] = buf6[2];
++			msg[0].buf[1] = buf6[3];
++			//msleep(3);
++			//info("TBSQBOX_RC_QUERY %x %x %x %x\n",
++			//		buf6[0],buf6[1],buf6[2],buf6[3]);
++			break;
++		case (TBSQBOX_VOLTAGE_CTRL):
++			buf6[0] = 3;
++			buf6[1] = msg[0].buf[0];
++			tbsqbox2ci_op_rw(d->udev, 0x8a, 0, 0,
++					buf6, 2, TBSQBOX_WRITE_MSG);
++			break;
++		case (TBSQBOX_LED_CTRL):
++			buf6[0] = 5;
++			buf6[1] = msg[0].buf[0];
++			tbsqbox2ci_op_rw(d->udev, 0x8a, 0, 0,
++					buf6, 2, TBSQBOX_WRITE_MSG);
++			break;
++		}
++
++		break;
++	}
++
++	mutex_unlock(&d->i2c_mutex);
++	mutex_unlock(&state->ca_mutex);
++	return num;
++}
++
++static u32 tbsqbox2ci_i2c_func(struct i2c_adapter *adapter)
++{
++	return I2C_FUNC_I2C;
++}
++
++static void tbsqbox2ci_led_ctrl(struct dvb_frontend *fe, int offon)
++{
++	static u8 led_off[] = { 0 };
++	static u8 led_on[] = { 1 };
++	struct i2c_msg msg = {
++		.addr = TBSQBOX_LED_CTRL,
++		.flags = 0,
++		.buf = led_off,
++		.len = 1
++	};
++	struct dvb_usb_adapter *udev_adap =
++		(struct dvb_usb_adapter *)(fe->dvb->priv);
++
++	if (offon)
++		msg.buf = led_on;
++	i2c_transfer(&udev_adap->dev->i2c_adap, &msg, 1);
++}
++
++static struct stv090x_config earda_config = {
++	.device         = STV0903,
++	.demod_mode     = STV090x_SINGLE,
++	.clk_mode       = STV090x_CLK_EXT,
++
++	.xtal           = 27000000,
++	.address        = 0x6a,
++
++	.ts1_mode       = STV090x_TSMODE_DVBCI,
++	.ts2_mode       = STV090x_TSMODE_SERIAL_CONTINUOUS,
++	
++	.repeater_level         = STV090x_RPTLEVEL_16,
++
++	.tuner_get_frequency    = stb6100_get_frequency,
++	.tuner_set_frequency    = stb6100_set_frequency,
++	.tuner_set_bandwidth    = stb6100_set_bandwidth,
++	.tuner_get_bandwidth    = stb6100_get_bandwidth,
++
++	.set_lock_led = tbsqbox2ci_led_ctrl,
++};
++
++static struct stb6100_config qbox2_stb6100_config = {
++	.tuner_address  = 0x60,
++	.refclock       = 27000000,
++};
++
++static struct i2c_algorithm tbsqbox2ci_i2c_algo = {
++	.master_xfer = tbsqbox2ci_i2c_transfer,
++	.functionality = tbsqbox2ci_i2c_func,
++};
++
++static int tbsqbox2ci_earda_tuner_attach(struct dvb_usb_adapter *adap)
++{
++	if (!dvb_attach(stb6100_attach, adap->fe_adap->fe, &qbox2_stb6100_config,
++		&adap->dev->i2c_adap))
++		return -EIO;
++
++	return 0;
++}
++static int tbsqbox2ci_read_mac_address(struct dvb_usb_device *d, u8 mac[6])
++{
++	int i,ret;
++	u8 ibuf[3] = {0, 0,0};
++	u8 eeprom[256], eepromline[16];
++
++	for (i = 0; i < 256; i++) {
++		ibuf[0]=1;//lenth
++		ibuf[1]=0xa0;//eeprom addr
++		ibuf[2]=i;//register
++		ret = tbsqbox2ci_op_rw(d->udev, 0x90, 0, 0,
++					ibuf, 3, TBSQBOX_WRITE_MSG);
++		ret = tbsqbox2ci_op_rw(d->udev, 0x91, 0, 0,
++					ibuf, 1, TBSQBOX_READ_MSG);
++			if (ret < 0) {
++				err("read eeprom failed.");
++				return -1;
++			} else {
++				eepromline[i%16] = ibuf[0];
++				eeprom[i] = ibuf[0];
++			}
++			
++			if ((i % 16) == 15) {
++				deb_xfer("%02x: ", i - 15);
++				debug_dump(eepromline, 16, deb_xfer);
++			}
++	}
++	memcpy(mac, eeprom + 16, 6);
++	return 0;
++};
++
++static int tbsqbox2ci_set_voltage(struct dvb_frontend *fe, 
++						enum fe_sec_voltage voltage)
++{
++	static u8 command_13v[1] = {0x00};
++	static u8 command_18v[1] = {0x01};
++	struct i2c_msg msg[] = {
++		{.addr = TBSQBOX_VOLTAGE_CTRL, .flags = 0,
++			.buf = command_13v, .len = 1},
++	};
++	
++	struct dvb_usb_adapter *udev_adap =
++		(struct dvb_usb_adapter *)(fe->dvb->priv);
++	if (voltage == SEC_VOLTAGE_18)
++		msg[0].buf = command_18v;
++	//info("tbsqbox2ci_set_voltage %d",voltage);
++	i2c_transfer(&udev_adap->dev->i2c_adap, msg, 1);
++	return 0;
++}
++
++static struct dvb_usb_device_properties tbsqbox2ci_properties;
++
++static int tbsqbox2ci_frontend_attach(struct dvb_usb_adapter *d)
++{
++	struct dvb_usb_device *u = d->dev;
++	struct tbsqbox2ci_state *state = (struct tbsqbox2ci_state *)u->priv;
++	u8 buf[20];
++
++	mutex_init(&state->ca_mutex);
++
++	if (tbsqbox2ci_properties.adapter->fe->tuner_attach == &tbsqbox2ci_earda_tuner_attach) {
++		d->fe_adap->fe = dvb_attach(stv090x_attach, &earda_config,
++				&u->i2c_adap, STV090x_DEMODULATOR_0);
++		if (d->fe_adap->fe != NULL) {
++			d->fe_adap->fe->ops.set_voltage = tbsqbox2ci_set_voltage;
++
++			buf[0] = 7;
++			buf[1] = 1;
++			tbsqbox2ci_op_rw(u->udev, 0x8a, 0, 0,
++					buf, 2, TBSQBOX_WRITE_MSG);
++
++			buf[0] = 1;
++			buf[1] = 1;
++			tbsqbox2ci_op_rw(u->udev, 0x8a, 0, 0,
++					buf, 2, TBSQBOX_WRITE_MSG);
++			
++			buf[0] = 6;
++			buf[1] = 1;
++			tbsqbox2ci_op_rw(u->udev, 0x8a, 0, 0,
++					buf, 2, TBSQBOX_WRITE_MSG);
++
++			tbsqbox2ci_init(d);
++
++			strlcpy(d->fe_adap->fe->ops.info.name,u->props.devices[0].name,52);
++			return 0;
++		}
++	}
++
++	return -EIO;
++}
++
++static void tbsqbox2ci2_usb_disconnect (struct usb_interface * intf)
++{
++	struct dvb_usb_device *d = usb_get_intfdata (intf);
++	
++	tbsqbox2ci_uninit (d);
++	dvb_usb_device_exit (intf);
++}
++
++static int tbsqbox2ci_rc_query(struct dvb_usb_device *d)
++{
++	u8 key[2];
++	struct i2c_msg msg = {
++		.addr = TBSQBOX_RC_QUERY,
++		.flags = I2C_M_RD,
++		.buf = key,
++		.len = 2
++	};
++
++	if (d->props.i2c_algo->master_xfer(&d->i2c_adap, &msg, 1) == 1) {
++		if (key[1] != 0xff) {
++			deb_xfer("RC code: 0x%02X !\n", key[1]);
++			rc_keydown(d->rc_dev, RC_PROTO_UNKNOWN, key[1],
++				   0);
++		}
++	}
++
++	return 0;
++}
++
++static struct usb_device_id tbsqbox2ci_table[] = {
++	{USB_DEVICE(0x734c, 0x5980)},
++	{ }
++};
++
++MODULE_DEVICE_TABLE(usb, tbsqbox2ci_table);
++
++static int tbsqbox2ci_load_firmware(struct usb_device *dev,
++			const struct firmware *frmwr)
++{
++	u8 *b, *p;
++	int ret = 0, i;
++	u8 reset;
++	const struct firmware *fw;
++	switch (dev->descriptor.idProduct) {
++	case 0x5980:
++		ret = request_firmware(&fw, tbsqbox2ci_properties.firmware, &dev->dev);
++		if (ret != 0) {
++			err("did not find the firmware file. (%s) "
++			"Please see linux/Documentation/dvb/ for more details "
++			"on firmware-problems.", tbsqbox2ci_properties.firmware);
++			return ret;
++		}
++		break;
++	default:
++		fw = frmwr;
++		break;
++	}
++	info("start downloading TBSQBOX2CI firmware");
++	p = kmalloc(fw->size, GFP_KERNEL);
++	reset = 1;
++	/*stop the CPU*/
++	tbsqbox2ci_op_rw(dev, 0xa0, 0x7f92, 0, &reset, 1, TBSQBOX_WRITE_MSG);
++	tbsqbox2ci_op_rw(dev, 0xa0, 0xe600, 0, &reset, 1, TBSQBOX_WRITE_MSG);
++
++	if (p != NULL) {
++		memcpy(p, fw->data, fw->size);
++		for (i = 0; i < fw->size; i += 0x40) {
++			b = (u8 *) p + i;
++			if (tbsqbox2ci_op_rw(dev, 0xa0, i, 0, b , 0x40,
++					TBSQBOX_WRITE_MSG) != 0x40) {
++				err("error while transferring firmware");
++				ret = -EINVAL;
++				break;
++			}
++		}
++		/* restart the CPU */
++		reset = 0;
++		if (ret || tbsqbox2ci_op_rw(dev, 0xa0, 0x7f92, 0, &reset, 1,
++					TBSQBOX_WRITE_MSG) != 1) {
++			err("could not restart the USB controller CPU.");
++			ret = -EINVAL;
++		}
++		if (ret || tbsqbox2ci_op_rw(dev, 0xa0, 0xe600, 0, &reset, 1,
++					TBSQBOX_WRITE_MSG) != 1) {
++			err("could not restart the USB controller CPU.");
++			ret = -EINVAL;
++		}
++
++		msleep(100);
++		kfree(p);
++	}
++	return ret;
++}
++
++static struct dvb_usb_device_properties tbsqbox2ci_properties = {
++	.caps = DVB_USB_IS_AN_I2C_ADAPTER,
++	.usb_ctrl = DEVICE_SPECIFIC,
++	.firmware = "dvb-usb-tbsqbox-id5980.fw",
++	.size_of_priv = sizeof(struct tbsqbox2ci_state),
++	.no_reconnect = 1,
++
++	.i2c_algo = &tbsqbox2ci_i2c_algo,
++	.rc.core = {
++		.rc_interval = 150,
++		.rc_codes = RC_MAP_TBS_NEC,
++		.module_name = KBUILD_MODNAME,
++		.allowed_protos   = RC_PROTO_BIT_NEC,
++		.rc_query = tbsqbox2ci_rc_query,
++	},
++
++	.generic_bulk_ctrl_endpoint = 0x81,
++	/* parameter for the MPEG2-data transfer */
++	.num_adapters = 1,
++	.download_firmware = tbsqbox2ci_load_firmware,
++	.read_mac_address = tbsqbox2ci_read_mac_address,
++	.adapter = {{
++		.num_frontends = 1,
++		.fe = {{
++			.frontend_attach = tbsqbox2ci_frontend_attach,
++			.streaming_ctrl = NULL,
++			.tuner_attach = tbsqbox2ci_earda_tuner_attach,
++			.stream = {
++				.type = USB_BULK,
++				.count = 8,
++				.endpoint = 0x82,
++				.u = {
++					.bulk = {
++						.buffersize = 4096,
++					}
++				}
++			},
++		} },
++	} },
++
++	.num_device_descs = 1,
++	.devices = {
++		{"TurboSight TBS QBOX2-CI DVB-S/S2",
++			{&tbsqbox2ci_table[0], NULL},
++			{NULL},
++		}
++	}
++};
++
++static int tbsqbox2ci_probe(struct usb_interface *intf,
++		const struct usb_device_id *id)
++{
++	if (0 == dvb_usb_device_init(intf, &tbsqbox2ci_properties,
++			THIS_MODULE, NULL, adapter_nr)) {
++		return 0;
++	}
++	return -ENODEV;
++}
++
++static struct usb_driver tbsqbox2ci_driver = {
++	.name = "tbsqbox2ci",
++	.probe = tbsqbox2ci_probe,
++	.disconnect = tbsqbox2ci2_usb_disconnect,
++	.id_table = tbsqbox2ci_table,
++};
++
++static int __init tbsqbox2ci_module_init(void)
++{
++	int ret =  usb_register(&tbsqbox2ci_driver);
++	if (ret)
++		err("usb_register failed. Error number %d", ret);
++
++	return ret;
++}
++
++static void __exit tbsqbox2ci_module_exit(void)
++{
++	usb_deregister(&tbsqbox2ci_driver);
++}
++
++module_init(tbsqbox2ci_module_init);
++module_exit(tbsqbox2ci_module_exit);
++
++MODULE_AUTHOR("Konstantin Dimitrov <kosio.dimitrov@gmail.com>");
++MODULE_DESCRIPTION("TurboSight (TBS) Qbox DVB-S2 CI driver");
++MODULE_VERSION("1.0");
++MODULE_LICENSE("GPL");
+diff -urN linux-4.17.1.orig/drivers/media/usb/dvb-usb/tbs-qbox2ci.h linux-4.17.1/drivers/media/usb/dvb-usb/tbs-qbox2ci.h
+--- linux-4.17.1.orig/drivers/media/usb/dvb-usb/tbs-qbox2ci.h	1970-01-01 01:00:00.000000000 +0100
++++ linux-4.17.1/drivers/media/usb/dvb-usb/tbs-qbox2ci.h	2018-06-15 21:24:19.453690695 +0100
+@@ -0,0 +1,8 @@
++#ifndef _TBSQBOX2CI_H_
++#define _TBSQBOX2CI_H_
++
++#define DVB_USB_LOG_PREFIX "tbsqbox2ci"
++#include "dvb-usb.h"
++
++#define deb_xfer(args...) dprintk(dvb_usb_tbsqbox2ci_debug, 0x02, args)
++#endif

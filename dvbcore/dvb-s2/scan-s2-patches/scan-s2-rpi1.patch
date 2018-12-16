@@ -1,0 +1,17 @@
+diff -urN CrazyCat-scan-s2.old/Makefile CrazyCat-scan-s2/Makefile
+--- CrazyCat-scan-s2.old/Makefile	2018-03-30 19:01:48.290069053 +0000
++++ CrazyCat-scan-s2/Makefile	2018-03-30 19:03:28.906064935 +0000
+@@ -8,6 +8,7 @@
+ INCLUDE=-I../s2/linux/include
+ 
+ TARGET=scan-s2
++CFLG=-mcpu=arm1176jzf-s
+ 
+ all: $(TARGET)
+ 
+@@ -26,4 +27,4 @@
+ 	rm -f $(OBJ) $(TARGET) *~
+ 
+ %.o: %.c
+-	$(CC) $(INCLUDE) -c $< -o $@
++	$(CC) $(CFLG) $(INCLUDE) -c $< -o $@

@@ -1,0 +1,15 @@
+Download the latest version of RTL8812AU from here:
+- https://github.com/gordboy/rtl8812au
+
+It is possible to mod Makefile to add the appropriate CFLAGS, modifying the platform and changing the module directory:
+	vi Makefile
+	...
+	EXTRA_CFLAGS += -O1 -mcpu=arm1176jzf-s
+        ...
+	CONFIG_PLATFORM_I386_PC = n
+	CONFIG_PLATFORM_ARM_RPI = y
+	...
+	KSRC := /media/target/lib/modules/$(KVER)/build
+	
+Make with: 
+	KVER="4.9.80+" make

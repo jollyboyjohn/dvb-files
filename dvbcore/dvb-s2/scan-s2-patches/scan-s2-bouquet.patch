@@ -1,0 +1,102 @@
+diff -urN CrazyCat-scan-s2.old/dump-bouquet.c CrazyCat-scan-s2/dump-bouquet.c
+--- CrazyCat-scan-s2.old/dump-bouquet.c	1970-01-01 00:00:00.000000000 +0000
++++ CrazyCat-scan-s2/dump-bouquet.c	2018-03-30 19:00:03.403822343 +0000
+@@ -0,0 +1,16 @@
++#include <stdio.h>
++#include "dump-bouquet.h"
++
++void bouquet_dump_service_parameter_set (FILE *f, service_t *s, transponder_t *t, int sat_number)
++{
++	fprintf (f, "# %s\n", s->service_name);
++
++	fprintf (f, "#SERVICE 1:0:");
++	fprintf (f, "%x:", s->type);
++	fprintf (f, "%x:", s->service_id);
++
++	fprintf (f, "%x:", t->transport_stream_id);
++	fprintf (f, "%x:", t->original_network_id);
++	fprintf (f, "%x0000:", t->orbital_pos);
++	fprintf (f, "0:0:0:\n");
++}
+diff -urN CrazyCat-scan-s2.old/dump-bouquet.h CrazyCat-scan-s2/dump-bouquet.h
+--- CrazyCat-scan-s2.old/dump-bouquet.h	1970-01-01 00:00:00.000000000 +0000
++++ CrazyCat-scan-s2/dump-bouquet.h	2018-03-30 19:00:08.494125409 +0000
+@@ -0,0 +1,10 @@
++#ifndef __DUMP_ZAP_H__
++#define __DUMP_ZAP_H__
++
++#include <stdint.h>
++
++#include "scan.h"
++
++extern void bouquet_dump_service_parameter_set (FILE *f, service_t *s, transponder_t *t, int sat_number);
++
++#endif
+diff -urN CrazyCat-scan-s2.old/Makefile CrazyCat-scan-s2/Makefile
+--- CrazyCat-scan-s2.old/Makefile	2018-03-30 18:45:38.952386305 +0000
++++ CrazyCat-scan-s2/Makefile	2018-03-30 18:50:38.510288962 +0000
+@@ -1,8 +1,8 @@
+ CC=gcc
+ 
+-SRC=atsc_psip_section.c diseqc.c dump-vdr.c dump-zap.c lnb.c scan.c section.c 
+-HED=atsc_psip_section.h diseqc.h dump-vdr.h dump-zap.h lnb.h scan.h section.h list.h
+-OBJ=atsc_psip_section.o diseqc.o dump-vdr.o dump-zap.o lnb.o scan.o section.o
++SRC=atsc_psip_section.c diseqc.c dump-vdr.c dump-zap.c lnb.c scan.c section.c dump-bouquet.c
++HED=atsc_psip_section.h diseqc.h dump-vdr.h dump-zap.h lnb.h scan.h section.h list.h dump-bouquet.o
++OBJ=atsc_psip_section.o diseqc.o dump-vdr.o dump-zap.o lnb.o scan.o section.o dump-bouquet.o
+ 
+ BIND=/usr/local/bin/
+ INCLUDE=-I../s2/linux/include
+diff -urN CrazyCat-scan-s2.old/scan.c CrazyCat-scan-s2/scan.c
+--- CrazyCat-scan-s2.old/scan.c	2018-03-30 18:45:39.312407824 +0000
++++ CrazyCat-scan-s2/scan.c	2018-03-30 18:59:17.091065488 +0000
+@@ -41,6 +41,7 @@
+ #include "dump-vdr.h"
+ #include "scan.h"
+ #include "lnb.h"
++#include "dump-bouquet.h"
+ 
+ #include "atsc_psip_section.h"
+ 
+@@ -904,8 +905,10 @@
+ 	char* dvbtext;
+ 
+ 	//	s->type = buf[2];
++	buf += 2;
++	s->type = *buf;
++	buf++;
+ 
+-	buf += 3;
+ 	len = *buf;
+ 	buf++;
+ 
+@@ -2999,6 +3002,10 @@
+ 				zap_dump_service_parameter_set (stdout, s, t, sat_number(t));
+ 				break;
+ 
++			case OUTPUT_BOUQUET:
++				bouquet_dump_service_parameter_set (stdout, s, t, sat_number(t));
++				break;
++
+ 			default:
+ 				break;
+ 			}
+@@ -3206,6 +3213,7 @@
+ 			if      (strcmp(optarg, "zap") == 0) output_format = OUTPUT_ZAP;
+ 			else if (strcmp(optarg, "vdr") == 0) output_format = OUTPUT_VDR;
+ 			else if (strcmp(optarg, "vdr16x") == 0) output_format = OUTPUT_VDR_16x;
++			else if (strcmp(optarg, "bouquet") == 0) output_format = OUTPUT_BOUQUET;
+ 			else {
+ 				bad_usage(argv[0], 0);
+ 				return -1;
+diff -urN CrazyCat-scan-s2.old/scan.h CrazyCat-scan-s2/scan.h
+--- CrazyCat-scan-s2.old/scan.h	2018-03-30 18:45:39.312407824 +0000
++++ CrazyCat-scan-s2/scan.h	2018-03-30 18:54:19.443374986 +0000
+@@ -49,6 +49,7 @@
+ enum format {
+ 	OUTPUT_ZAP,
+ 	OUTPUT_VDR,
++	OUTPUT_BOUQUET,
+ 	OUTPUT_VDR_16x
+ };
+ 
